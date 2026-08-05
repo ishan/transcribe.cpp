@@ -28,6 +28,12 @@ void apply_family_invariants(transcribe_model & model) {
     // speaker_segment surface directly from the probs.
     transcribe::set_feature(&model, TRANSCRIBE_FEATURE_DIARIZATION, true);
 
+    // Push-audio entry point (STREAM slot). The compute core was always
+    // streaming — AOSC speaker cache + FIFO carried across chunks — and the
+    // arch now exposes stream_begin/_feed/_finalize over that same loop, so a
+    // caller can drive diarization live instead of only over a whole file.
+    caps.supports_streaming = true;
+
     // Abort callback honored at the top of each run.
     transcribe::set_feature(&model, TRANSCRIBE_FEATURE_CANCELLATION, true);
 }

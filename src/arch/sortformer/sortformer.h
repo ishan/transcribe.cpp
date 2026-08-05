@@ -169,6 +169,33 @@ struct SortformerSession final : public transcribe_session {
     std::vector<float>    concat_host;        // [T_concat * enc_d_model] Graph B input
     std::vector<float>    stream_preds_host;  // [T_concat * n_spk] Graph B readback
 
+    // --- push-audio (STREAM-slot) state ---
+    //
+    // The chunk loop below is already incremental over mel frames, so the
+    // push-audio path reuses it verbatim and only has to solve the feature
+    // side: hold enough PCM to compute the mel frames a chunk needs, and
+    // hold it at absolute-frame alignment so indices match the batch run.
+    //
+    // `pcm_tail` is a sliding window, not the whole recording: audio behind
+    // the next chunk's left context is dropped. `pcm_base` is the absolute
+    // sample index of pcm_tail[0] and is always a multiple of the mel hop,
+    // so local frame j is absolute frame (pcm_base / hop) + j.
+    std::vector<float> pcm_tail;
+    int64_t            pcm_base           = 0;  // abs sample idx of pcm_tail[0]; multiple of hop
+    int64_t            pcm_total          = 0;  // total samples fed this utterance
+    int                stream_stt         = 0;  // abs mel-frame cursor (matches `stt` in the batch loop)
+    bool               stream_active      = false;
+    transcribe_sortformer_preset stream_preset = TRANSCRIBE_SORTFORMER_PRESET_DEFAULT;
+
+    void stream_state_reset() {
+        pcm_tail.clear();
+        pcm_base      = 0;
+        pcm_total     = 0;
+        stream_stt    = 0;
+        stream_active = false;
+        stream_preset = TRANSCRIBE_SORTFORMER_PRESET_DEFAULT;
+    }
+
     SortformerSession() = default;
     ~SortformerSession() override;
 };
