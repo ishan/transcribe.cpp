@@ -1189,7 +1189,29 @@ static transcribe_status stream_feed(transcribe_session *       session,
     if (st != TRANSCRIBE_OK) {
         return st;
     }
-    fill_update(pc, pm, update, /*is_final=*/false, /*changed=*/pc->stream_stt != before);
+    const bool changed = pc->stream_stt != before;
+    if (changed) {
+        // Publish the segments committed so far. Without this the speaker
+        // surface would stay empty until finalize, which defeats the point of
+        // a push-audio diarizer: a live caller needs to see who is speaking
+        // while the meeting is still running. Only frames the AOSC state
+        // machine has already emitted are included, so what is published here
+        // never changes retroactively.
+        const int    sub   = pm->hparams.enc_subsampling_factor;
+        const int    n_spk = pm->hparams.max_speakers;
+        const double ms_per_frame =
+            1000.0 * static_cast<double>(pm->hparams.frame_hop) / static_cast<double>(pm->hparams.fe_sample_rate);
+        const int committed = std::min(pc->stream.total_n, (pc->stream_stt + sub - 1) / sub);
+        // probs_to_speaker_segments appends, and the batch path relies on that
+        // because it runs exactly once against a freshly cleared result. Here
+        // it runs after every feed over a growing prefix, so the previous
+        // publication has to go or the rows accumulate quadratically.
+        pc->speaker_segments.clear();
+        probs_to_speaker_segments(pc, pc->stream.total_preds, committed, n_spk, ms_per_frame, /*threshold=*/0.5f);
+        pc->result_kind = TRANSCRIBE_TIMESTAMPS_NONE;
+        pc->has_result  = true;
+    }
+    fill_update(pc, pm, update, /*is_final=*/false, /*changed=*/changed);
     return TRANSCRIBE_OK;
 }
 
@@ -1221,6 +1243,9 @@ static transcribe_status stream_finalize(transcribe_session * session, transcrib
                                          static_cast<long long>(used_n) * n_spk, shape, 2, "diarize");
     }
 
+    // Drop whatever the last feed published before rebuilding over the full
+    // frame count, so the final rows are the whole utterance exactly once.
+    pc->speaker_segments.clear();
     probs_to_speaker_segments(pc, pc->stream.total_preds, used_n, n_spk, ms_per_frame, /*threshold=*/0.5f);
     pc->result_kind = TRANSCRIBE_TIMESTAMPS_NONE;
     pc->has_result  = true;
